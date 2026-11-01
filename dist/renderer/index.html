@@ -1,0 +1,26 @@
+<!-- Copyright (c) 2026 arfanayub0. All rights reserved. Licensed under the NEXUS Proprietary Perpetual License. See LICENSE. -->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!--
+      Defence in depth: the main process also injects this policy as a response
+      header (src/main/security.ts). The meta copy matters for the packaged
+      build, where the document is loaded from file:// and may not pass through
+      webRequest. T03 tightens this for production builds.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'none'; object-src 'none'; frame-src 'none'; media-src 'self'; base-uri 'none'; form-action 'none'"
+    />
+    <title>NEXUS</title>
+    <script type="module" crossorigin src="./assets/index-vU-1xnh9.js"></script>
+    <link rel="modulepreload" crossorigin href="./assets/react-Sc8k7bBc.js">
+    <link rel="modulepreload" crossorigin href="./assets/charts-KgV78X7w.js">
+    <link rel="stylesheet" crossorigin href="./assets/index-NAqAYvA6.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>

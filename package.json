@@ -1,0 +1,61 @@
+{
+  "name": "nexus",
+  "version": "1.0.3",
+  "private": true,
+  "description": "NEXUS - offline-first ERP and CRM for small businesses",
+  "author": {
+    "name": "arfanayub0",
+    "email": "arfanayub0@users.noreply.github.com"
+  },
+  "license": "SEE LICENSE IN LICENSE",
+  "main": "dist/main/main/index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n renderer,main,preload,app -c cyan,yellow,blue,magenta \"npm:dev:renderer\" \"npm:dev:main\" \"npm:dev:preload\" \"npm:dev:electron\"",
+    "dev:renderer": "vite",
+    "dev:main": "tsc -p tsconfig.main.json --watch --preserveWatchOutput",
+    "dev:preload": "vite build --config vite.preload.config.ts --watch",
+    "dev:electron": "wait-on tcp:5173 file:dist/main/main/index.js file:dist/main/preload/index.js && node scripts/dev-electron.mjs",
+    "build": "npm run build:main && npm run build:preload && npm run build:renderer",
+    "build:main": "tsc -p tsconfig.main.json",
+    "build:preload": "vite build --config vite.preload.config.ts",
+    "build:renderer": "vite build",
+    "dist": "npm run build && electron-builder",
+    "dist:dir": "npm run build && electron-builder --dir",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit",
+    "test": "npm run build:main && node --test tests/*.test.cjs",
+    "genkeys": "node scripts/gen-license-keys.mjs",
+    "keygen": "node scripts/keygen.mjs",
+    "start": "electron .",
+    "reset-password": "node scripts/reset-password.mjs"
+  },
+  "dependencies": {
+    "sql.js": "1.11.0",
+    "xlsx": "0.18.5"
+  },
+  "devDependencies": {
+    "@types/node": "22.7.5",
+    "@types/react": "18.3.11",
+    "@types/react-dom": "18.3.1",
+    "@types/sql.js": "1.4.9",
+    "@vitejs/plugin-react": "4.3.2",
+    "autoprefixer": "10.4.20",
+    "clsx": "2.1.1",
+    "concurrently": "9.0.1",
+    "electron": "33.4.11",
+    "electron-builder": "25.1.8",
+    "lucide-react": "0.451.0",
+    "postcss": "8.4.47",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "react-router-dom": "6.26.2",
+    "recharts": "2.12.7",
+    "tailwindcss": "3.4.14",
+    "typescript": "5.6.3",
+    "vite": "5.4.9",
+    "wait-on": "8.0.1",
+    "zustand": "4.5.5"
+  }
+}

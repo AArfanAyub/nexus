@@ -1,0 +1,670 @@
+/* Copyright (c) 2026 arfanayub0. All rights reserved. Licensed under the NEXUS Proprietary Perpetual License. See LICENSE. */
+
+/**
+ * Credentials, sessions and the bootstrap payload.
+ *
+ * - Passwords: scrypt (N=16384, r=8, p=1, 16-byte salt, 64-byte key) with
+ *   `timingSafeEqual`. No native module, no bcrypt, no argon2.
+ * - Sessions live in memory, keyed by an opaque token; the `sessions` table is
+ *   the durable trail for audit, not the authorisation source.
+ * - A failed login MUST leave an audit row. That is why `auth.*` channels are
+ *   registered as non-transactional in `ipc.ts`: the service commits its own
+ *   bookkeeping transaction before throwing, otherwise the rollback would erase
+ *   the evidence (T02 acceptance #7).
+ */
+
+import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
+
+import { nowIso } from '../../shared/dates';
+import type { PresetId } from '../../shared/industry-presets';
+import { MODULES, type ModuleId } from '../../shared/modules';
+import { resolvePermissions, type Permission } from '../../shared/permissions';
+import type {
+  LoginResult,
+  BootstrapResult,
+  Company,
+  NodePlatform,
+  SecurityPolicy,
+  SessionSummary,
+  User,
+  UserPrefs,
+} from '../../shared/types';
+import { conn } from '../db/connection';
+import { authRequired, conflict, validation } from '../errors';
+import { logError } from '../log';
+
+import * as auditLog from './audit';
+import { licenseStatus } from './license';
+
+const SCRYPT_N = 16384;
+const SCRYPT_R = 8;
+const SCRYPT_P = 1;
+const SALT_BYTES = 16;
+const KEY_BYTES = 64;
+
+/** Stored in `users.password_algo`; a future change gets a new label. */
+export const PASSWORD_ALGO = 'scrypt-n16384-r8-p1';
+
+const BAD_CREDENTIALS = 'Incorrect username or password.';
+const LOCKED_MESSAGE =
+  'Too many failed sign-in attempts. This account is locked for a few minutes — try again shortly.';
+
+export const DEFAULT_SECURITY_POLICY: SecurityPolicy = {
+  idleTimeoutMin: 15,
+  minPasswordLength: 10,
+  requireSymbol: false,
+  maxAttempts: 5,
+  lockoutMin: 15,
+};
+
+export interface UserRow {
+  readonly id: string;
+  readonly username: string;
+  readonly full_name: string;
+  readonly email: string | null;
+  readonly password_hash: string;
+  readonly password_salt: string;
+  readonly password_algo: string;
+  readonly must_change_password: number;
+  readonly is_active: number;
+  readonly is_owner: number;
+  readonly prefs_json: string;
+  readonly failed_attempts: number;
+  readonly locked_until: string | null;
+  readonly last_login_at: string | null;
+  readonly created_at: string;
+  readonly updated_at: string;
+  readonly deleted_at: string | null;
+}
+
+export interface PasswordHash {
+  readonly hash: string;
+  readonly salt: string;
+  readonly algo: string;
+}
+
+export interface ActiveSession {
+  readonly token: string;
+  readonly sessionId: string;
+  readonly userId: string;
+  readonly username: string;
+  readonly startedAt: string;
+  readonly user: User;
+  readonly permissions: ReadonlySet<Permission>;
+  locked: boolean;
+  lastSeenAt: string;
+}
+
+const sessions = new Map<string, ActiveSession>();
+let activeToken: string | null = null;
+
+// ── passwords ────────────────────────────────────────────────────────────────
+
+/** scrypt hash with a fresh 16-byte salt. */
+export function hashPassword(password: string, saltBase64?: string): PasswordHash {
+  const salt = saltBase64 ? Buffer.from(saltBase64, 'base64') : randomBytes(SALT_BYTES);
+  const key = scryptSync(password.normalize('NFKC'), salt, KEY_BYTES, {
+    N: SCRYPT_N,
+    r: SCRYPT_R,
+    p: SCRYPT_P,
+    maxmem: 64 * 1024 * 1024,
+  });
+  return {
+    hash: key.toString('base64'),
+    salt: salt.toString('base64'),
+    algo: PASSWORD_ALGO,
+  };
+}
+
+/** Constant-time comparison. Returns false rather than throwing on damage. */
+export function verifyPassword(password: string, stored: PasswordHash): boolean {
+  if (stored.algo !== PASSWORD_ALGO) {
+    logError('auth.verify', new Error(`Unsupported password algorithm: ${stored.algo}`));
+    return false;
+  }
+  try {
+    const expected = Buffer.from(stored.hash, 'base64');
+    const candidate = scryptSync(password.normalize('NFKC'), Buffer.from(stored.salt, 'base64'), expected.length, {
+      N: SCRYPT_N,
+      r: SCRYPT_R,
+      p: SCRYPT_P,
+      maxmem: 64 * 1024 * 1024,
+    });
+    return candidate.length === expected.length && timingSafeEqual(candidate, expected);
+  } catch (error) {
+    logError('auth.verify', error);
+    return false;
+  }
+}
+
+/** Reads `settings.security`, falling back to the documented defaults. */
+export function securityPolicy(): SecurityPolicy {
+  const row = conn().one<{ value_json: string }>('SELECT value_json FROM settings WHERE key = ?', [
+    'security',
+  ]);
+  if (!row) return DEFAULT_SECURITY_POLICY;
+  try {
+    const parsed = JSON.parse(row.value_json) as Partial<SecurityPolicy>;
+    return {
+      idleTimeoutMin: Number(parsed.idleTimeoutMin ?? DEFAULT_SECURITY_POLICY.idleTimeoutMin),
+      minPasswordLength: Number(parsed.minPasswordLength ?? DEFAULT_SECURITY_POLICY.minPasswordLength),
+      requireSymbol: Boolean(parsed.requireSymbol ?? DEFAULT_SECURITY_POLICY.requireSymbol),
+      maxAttempts: Number(parsed.maxAttempts ?? DEFAULT_SECURITY_POLICY.maxAttempts),
+      lockoutMin: Number(parsed.lockoutMin ?? DEFAULT_SECURITY_POLICY.lockoutMin),
+    };
+  } catch {
+    return DEFAULT_SECURITY_POLICY;
+  }
+}
+
+/** Rejects a weak password with a sentence the user can act on. */
+export function assertPasswordStrength(password: string, username: string): void {
+  const policy = securityPolicy();
+  if (password.length < policy.minPasswordLength) {
+    throw validation(
+      'newPassword',
+      `Use at least ${String(policy.minPasswordLength)} characters so the password is not guessable.`,
+    );
+  }
+  if (policy.requireSymbol && !/[^A-Za-z0-9]/.test(password)) {
+    throw validation('newPassword', 'The password must contain at least one symbol.');
+  }
+  if (!/[A-Za-z]/.test(password) || !/[0-9]/.test(password)) {
+    throw validation('newPassword', 'The password must contain at least one letter and one number.');
+  }
+  if (username.length >= 3 && password.toLowerCase().includes(username.toLowerCase())) {
+    throw validation('newPassword', 'The password must not contain your username.');
+  }
+}
+
+// ── rows → DTOs ──────────────────────────────────────────────────────────────
+
+function safeJson<T>(text: string | null, fallback: T): T {
+  if (!text) return fallback;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+/** Role ids for a user, in role-name order. */
+export function roleIdsFor(userId: string): readonly string[] {
+  return conn()
+    .all<{ role_id: string }>(
+      `SELECT ur.role_id FROM user_roles ur
+         JOIN roles r ON r.id = ur.role_id
+        WHERE ur.user_id = ? AND r.deleted_at IS NULL
+        ORDER BY r.name`,
+      [userId],
+    )
+    .map((row) => row.role_id);
+}
+
+/** Union of every role's permissions. Unknown keys in stored JSON are dropped. */
+export function permissionsFor(userId: string): Set<Permission> {
+  const rows = conn().all<{ permissions_json: string }>(
+    `SELECT r.permissions_json FROM roles r
+       JOIN user_roles ur ON ur.role_id = r.id
+      WHERE ur.user_id = ? AND r.deleted_at IS NULL`,
+    [userId],
+  );
+  return resolvePermissions(rows.map((row) => safeJson<readonly string[]>(row.permissions_json, [])));
+}
+
+/** Maps a `users` row plus its roles to the wire DTO. */
+export function toUser(row: UserRow): User {
+  return {
+    id: row.id,
+    username: row.username,
+    fullName: row.full_name,
+    email: row.email,
+    isActive: row.is_active === 1,
+    isOwner: row.is_owner === 1,
+    mustChangePassword: row.must_change_password === 1,
+    roleIds: roleIdsFor(row.id),
+    prefs: safeJson<UserPrefs>(row.prefs_json, {}),
+    lastLoginAt: row.last_login_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function findUserById(id: string): UserRow | undefined {
+  return conn().one<UserRow>(
+    `SELECT id, username, full_name, email, password_hash, password_salt, password_algo,
+            must_change_password, is_active, is_owner, prefs_json, failed_attempts,
+            locked_until, last_login_at, created_at, updated_at, deleted_at
+       FROM users WHERE id = ? AND deleted_at IS NULL`,
+    [id],
+  );
+}
+
+function findUserByUsername(username: string): UserRow | undefined {
+  return conn().one<UserRow>(
+    `SELECT id, username, full_name, email, password_hash, password_salt, password_algo,
+            must_change_password, is_active, is_owner, prefs_json, failed_attempts,
+            locked_until, last_login_at, created_at, updated_at, deleted_at
+       FROM users WHERE username = ? AND deleted_at IS NULL`,
+    [username],
+  );
+}
+
+/** Number of live users — `0` means this is a first run and onboarding has not run. */
+export function userCount(): number {
+  const row = conn().one<{ total: number }>('SELECT COUNT(*) AS total FROM users WHERE deleted_at IS NULL');
+  return row ? Number(row.total) : 0;
+}
+
+// ── session ──────────────────────────────────────────────────────────────────
+
+function prepareSession(row: UserRow): ActiveSession {
+  const startedAt = nowIso();
+  return {
+    token: randomBytes(32).toString('base64url'),
+    sessionId: randomUUID(),
+    userId: row.id,
+    username: row.username,
+    startedAt,
+    user: toUser(row),
+    permissions: permissionsFor(row.id),
+    locked: false,
+    lastSeenAt: startedAt,
+  };
+}
+
+/** Writes the durable session row and makes the session current. */
+function activateSession(session: ActiveSession): void {
+  conn().run('INSERT INTO sessions (id, user_id, started_at, last_seen_at) VALUES (?, ?, ?, ?)', [
+    session.sessionId,
+    session.userId,
+    session.startedAt,
+    session.lastSeenAt,
+  ]);
+  sessions.set(session.token, session);
+  activeToken = session.token;
+}
+
+function loginResultOf(session: ActiveSession): LoginResult {
+  return {
+    user: session.user,
+    permissions: [...session.permissions].sort(),
+    sessionId: session.sessionId,
+  };
+}
+
+/** The session the renderer is currently acting as, if any. */
+export function currentSession(): ActiveSession | null {
+  if (!activeToken) return null;
+  return sessions.get(activeToken) ?? null;
+}
+
+/** The session or an `AUTH_REQUIRED` error. */
+export function requireSession(): ActiveSession {
+  const session = currentSession();
+  if (!session) throw authRequired();
+  return session;
+}
+
+/** What `auth.session` returns: never the token. */
+export function sessionSummary(): SessionSummary {
+  const session = currentSession();
+  const policy = securityPolicy();
+  if (!session) {
+    return { user: null, locked: false, idleTimeoutMin: policy.idleTimeoutMin, lastSeenAt: null };
+  }
+  return {
+    user: session.user,
+    locked: session.locked,
+    idleTimeoutMin: policy.idleTimeoutMin,
+    lastSeenAt: session.lastSeenAt,
+  };
+}
+
+/** Records a failed attempt, locks the account when the limit is reached, and audits. */
+function recordFailedLogin(username: string, row: UserRow | undefined, reason: string): void {
+  const database = conn();
+  database.tx(() => {
+    if (row) {
+      const policy = securityPolicy();
+      const attempts = Number(row.failed_attempts) + 1;
+      const lockUntil =
+        attempts >= policy.maxAttempts
+          ? new Date(Date.now() + policy.lockoutMin * 60_000).toISOString()
+          : null;
+      database.run(
+        `UPDATE users SET failed_attempts = ?, locked_until = COALESCE(?, locked_until), updated_at = ?
+          WHERE id = ?`,
+        [attempts, lockUntil, nowIso(), row.id],
+      );
+    }
+    auditLog.append({
+      actorId: row?.id ?? null,
+      actorName: username,
+      entity: 'user',
+      entityId: row?.id ?? null,
+      action: 'login_failed',
+      meta: { reason },
+    });
+  });
+  database.markDirty();
+}
+
+/**
+ * Verifies credentials, opens a session, audits the outcome.
+ * One `login_failed` audit row per failed attempt (T02 acceptance #7).
+ */
+export function login(usernameInput: string, password: string): LoginResult {
+  const username = usernameInput.trim().toLowerCase();
+  const database = conn();
+  const row = findUserByUsername(username);
+
+  if (!row) {
+    recordFailedLogin(username, undefined, 'unknown_username');
+    throw authRequired(BAD_CREDENTIALS);
+  }
+
+  if (row.deleted_at !== null || row.is_active !== 1) {
+    recordFailedLogin(username, row, 'inactive');
+    throw authRequired('This account is disabled. Ask an administrator to re-enable it.');
+  }
+
+  if (row.locked_until) {
+    const lockedUntil = Date.parse(row.locked_until);
+    if (!Number.isNaN(lockedUntil) && lockedUntil > Date.now()) {
+      recordFailedLogin(username, row, 'locked');
+      throw conflict(LOCKED_MESSAGE);
+    }
+  }
+
+  const valid = verifyPassword(password, {
+    hash: row.password_hash,
+    salt: row.password_salt,
+    algo: row.password_algo,
+  });
+
+  if (!valid) {
+    recordFailedLogin(username, row, 'bad_password');
+    throw authRequired(BAD_CREDENTIALS);
+  }
+
+  const session = prepareSession(row);
+  database.tx(() => {
+    database.run(
+      `UPDATE users SET failed_attempts = 0, locked_until = NULL, last_login_at = ?, updated_at = ?
+        WHERE id = ?`,
+      [nowIso(), nowIso(), row.id],
+    );
+    activateSession(session);
+    auditLog.append({
+      actorId: row.id,
+      actorName: row.username,
+      entity: 'user',
+      entityId: row.id,
+      action: 'login',
+      meta: { sessionId: session.sessionId },
+    });
+  });
+  database.markDirty();
+
+  return loginResultOf(session);
+}
+
+/** Re-authenticates the locked session. */
+export function unlock(password: string): LoginResult {
+  const session = requireSession();
+  const row = findUserById(session.userId);
+  if (!row) throw authRequired();
+
+  const valid = verifyPassword(password, {
+    hash: row.password_hash,
+    salt: row.password_salt,
+    algo: row.password_algo,
+  });
+  if (!valid) {
+    const database = conn();
+    database.tx(() => {
+      auditLog.append({
+        actorId: row.id,
+        actorName: row.username,
+        entity: 'user',
+        entityId: row.id,
+        action: 'unlock_failed',
+      });
+    });
+    database.markDirty();
+    throw authRequired(BAD_CREDENTIALS);
+  }
+
+  const database = conn();
+  database.tx(() => {
+    session.locked = false;
+    session.lastSeenAt = nowIso();
+    database.run('UPDATE sessions SET last_seen_at = ? WHERE id = ?', [session.lastSeenAt, session.sessionId]);
+    auditLog.append({
+      actorId: row.id,
+      actorName: row.username,
+      entity: 'user',
+      entityId: row.id,
+      action: 'unlock',
+    });
+  });
+  database.markDirty();
+
+  return {
+    user: session.user,
+    permissions: [...session.permissions].sort(),
+    sessionId: session.sessionId,
+  };
+}
+
+/** Locks the session in place; the renderer keeps its unsaved state (D-16). */
+export function lock(): { readonly lockedAt: string } {
+  const session = requireSession();
+  const lockedAt = nowIso();
+  const database = conn();
+  database.tx(() => {
+    session.locked = true;
+    auditLog.append({
+      actorId: session.userId,
+      actorName: session.username,
+      entity: 'user',
+      entityId: session.userId,
+      action: 'lock',
+    });
+  });
+  database.markDirty();
+  return { lockedAt };
+}
+
+/** Ends the session. */
+export function logout(): void {
+  const session = currentSession();
+  if (!session) return;
+  const endedAt = nowIso();
+  const database = conn();
+  database.tx(() => {
+    database.run('UPDATE sessions SET ended_at = ?, end_reason = ? WHERE id = ?', [
+      endedAt,
+      'logout',
+      session.sessionId,
+    ]);
+    auditLog.append({
+      actorId: session.userId,
+      actorName: session.username,
+      entity: 'user',
+      entityId: session.userId,
+      action: 'logout',
+    });
+  });
+  sessions.delete(session.token);
+  if (activeToken === session.token) activeToken = null;
+  database.markDirty();
+}
+
+/** Refreshes `lastSeenAt`; returns whether the session is locked. */
+export function heartbeat(): { readonly locked: boolean } {
+  const session = requireSession();
+  session.lastSeenAt = nowIso();
+  return { locked: session.locked };
+}
+
+/**
+ * Applies the idle policy. Called by the main-process timer; locks the session
+ * and reports `true` when the renderer must show the lock screen.
+ */
+export function checkIdle(): boolean {
+  const session = currentSession();
+  if (!session || session.locked) return false;
+  const policy = securityPolicy();
+  const idleMs = Date.now() - Date.parse(session.lastSeenAt);
+  if (idleMs < policy.idleTimeoutMin * 60_000) return false;
+  try {
+    lock();
+    return true;
+  } catch (error) {
+    logError('auth.checkIdle', error);
+    return false;
+  }
+}
+
+/** Changes the current user's password after re-checking the old one. */
+export function changePassword(currentPassword: string, newPassword: string): void {
+  const session = requireSession();
+  const row = findUserById(session.userId);
+  if (!row) throw authRequired();
+
+  const valid = verifyPassword(currentPassword, {
+    hash: row.password_hash,
+    salt: row.password_salt,
+    algo: row.password_algo,
+  });
+  if (!valid) {
+    throw authRequired('The current password is not correct.');
+  }
+
+  assertPasswordStrength(newPassword, row.username);
+  if (newPassword === currentPassword) {
+    throw validation('newPassword', 'The new password must be different from the current one.');
+  }
+
+  const next = hashPassword(newPassword);
+  const database = conn();
+  database.tx(() => {
+    database.run(
+      `UPDATE users SET password_hash = ?, password_salt = ?, password_algo = ?,
+                        must_change_password = 0, updated_at = ?
+        WHERE id = ?`,
+      [next.hash, next.salt, next.algo, nowIso(), row.id],
+    );
+    auditLog.append({
+      actorId: row.id,
+      actorName: row.username,
+      entity: 'user',
+      entityId: row.id,
+      action: 'password_changed',
+    });
+  });
+  database.markDirty();
+}
+
+// ── bootstrap ────────────────────────────────────────────────────────────────
+
+function readCompany(): Company | null {
+  const row = conn().one<{
+    id: string;
+    name: string;
+    legal_name: string | null;
+    tax_id: string | null;
+    address_json: string | null;
+    logo_path: string | null;
+    base_currency: string;
+    fiscal_year_start_month: number;
+    date_format: string;
+    number_format: string;
+    industry_preset: string | null;
+    created_at: string;
+    updated_at: string;
+  }>(
+    `SELECT id, name, legal_name, tax_id, address_json, logo_path, base_currency,
+            fiscal_year_start_month, date_format, number_format, industry_preset,
+            created_at, updated_at
+       FROM companies LIMIT 1`,
+  );
+  if (!row) return null;
+  return {
+    id: row.id,
+    name: row.name,
+    legalName: row.legal_name,
+    taxId: row.tax_id,
+    address: row.address_json === null ? null : safeJson(row.address_json, null),
+    logoPath: row.logo_path,
+    baseCurrency: row.base_currency,
+    fiscalYearStartMonth: Number(row.fiscal_year_start_month),
+    dateFormat: row.date_format,
+    numberFormat: row.number_format,
+    industryPreset: row.industry_preset,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function presetOf(company: Company | null): PresetId | null {
+  const candidate = company?.industryPreset;
+  if (!candidate) return null;
+  const known: readonly PresetId[] = [
+    'manufacturing',
+    'wholesale_retail',
+    'services',
+    'construction',
+    'education',
+    'ngo',
+    'logistics',
+  ];
+  return known.includes(candidate as PresetId) ? (candidate as PresetId) : null;
+}
+
+function visibleModuleIds(company: Company | null, permissions: ReadonlySet<Permission>): readonly ModuleId[] {
+  const preset = presetOf(company);
+  return MODULES.filter((module) => {
+    if (preset) {
+      if (module.enabledByPreset.length > 0 && !module.enabledByPreset.includes(preset)) return false;
+    }
+    if (module.permissions.length === 0) return true;
+    return module.permissions.some((permission) => permissions.has(permission));
+  }).map((module) => module.id);
+}
+
+/**
+ * `app.bootstrap` — one call that tells the renderer everything it needs to
+ * decide between onboarding, login, lock screen and the shell.
+ */
+export function bootstrap(context: {
+  readonly platform: NodePlatform;
+  readonly version: string;
+}): BootstrapResult {
+  const session = currentSession();
+  const company = readCompany();
+  const license = licenseStatus();
+  const permissions = session ? session.permissions : new Set<Permission>();
+  const prefs: UserPrefs = session?.user.prefs ?? {};
+
+  return {
+    initialised: company !== null && userCount() > 0,
+    needsOnboarding: company === null || userCount() === 0,
+    session: sessionSummary(),
+    user: session && !session.locked ? session.user : null,
+    permissions: [...permissions].sort(),
+    company,
+    license,
+    prefs,
+    suspectClock: license.suspectClock,
+    edition: license.edition,
+    features: license.features,
+    modules: visibleModuleIds(company, permissions),
+    theme: prefs.theme ?? 'light',
+    density: prefs.density ?? 'comfortable',
+    platform: context.platform,
+    version: context.version,
+  };
+}

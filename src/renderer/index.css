@@ -1,0 +1,337 @@
+/* Copyright (c) 2026 arfanayub0. All rights reserved. Licensed under the NEXUS Proprietary Perpetual License. See LICENSE. */
+
+/**
+ * Design tokens (ARCHITECTURE §E.3) — the only place a colour literal is legal.
+ *
+ * Layers, in order:
+ *   1. `:root`            — the light theme, every token
+ *   2. `[data-theme=dark]` — the same token names, dark values
+ *   3. `[data-density]`   — row height + control padding
+ *   4. `[data-accent]`    — accent family only
+ *   5. base + components  — focus ring, scrollbars, reduced motion
+ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── 1. light theme ────────────────────────────────────────────────────────── */
+
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #f1f3f5;
+  --surface-3: #e9ecef;
+  --border: #dfe3e8;
+  --border-strong: #c3cad3;
+  --text: #14181f;
+  --text-muted: #5b6673;
+  --text-inverse: #ffffff;
+
+  --accent: #2f6feb;
+  --accent-hover: #2559c9;
+  --accent-soft: #e7efff;
+  /* Readable accent text on `--accent-soft`; a different value in dark mode. */
+  --accent-strong: #1c47a3;
+
+  /* Brand mark gradient. Fixed across themes on purpose: the identity should not
+     shift hue when the user flips to dark, only the wordmark follows `--text`. */
+  --brand-from: #4f46e5;
+  --brand-to: #06b6d4;
+
+  --success: #1a7f47;
+  --success-soft: #e4f5ea;
+  --warning: #9a6700;
+  --warning-soft: #fdf3d7;
+  --danger: #c62828;
+  --danger-soft: #fdeaea;
+  --info: #0b6b8a;
+
+  --overlay: rgba(13, 17, 23, 0.38);
+  /* Layered, low-spread shadows. Light mode tints them with the ink colour so
+     an overlay reads as lifted paper rather than a grey smudge. */
+  --shadow-raised: 0 1px 2px rgba(13, 17, 23, 0.06), 0 2px 8px rgba(13, 17, 23, 0.06);
+  --shadow-overlay: 0 8px 24px rgba(13, 17, 23, 0.14), 0 2px 6px rgba(13, 17, 23, 0.08);
+  --shadow-popover: 0 12px 32px rgba(13, 17, 23, 0.18), 0 2px 8px rgba(13, 17, 23, 0.08);
+
+  --row-h: 52px;
+  --row-h-dense: 40px;
+  --control-h: 34px;
+
+  /* No external fonts: the OFL face is self-hosted, with a system fallback. */
+  --font-ui: 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, 'Cascadia Mono', 'SF Mono', Menlo, Consolas, monospace;
+
+  --fs-title: 19px;
+  --fs-body: 13px;
+  --fs-meta: 12px;
+  --fs-micro: 11px;
+  --fs-kpi: 28px;
+  --fs-code: 12px;
+
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --sp-7: 48px;
+  --sp-8: 64px;
+
+  /* 8pt grid: 8 for controls, 12 for surfaces, 16 for cards. */
+  --r-input: 8px;
+  --r-card: 12px;
+  --r-card-lg: 16px;
+  --r-chip: 999px;
+
+  --focus-ring: 0 0 0 2px var(--accent);
+
+  --dur-fast: 120ms;
+  --dur-base: 150ms;
+  --dur-slow: 180ms;
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+
+  --sidebar-w: 240px;
+  --sidebar-w-collapsed: 64px;
+  --topbar-h: 48px;
+}
+
+/* ── 2. dark theme ─────────────────────────────────────────────────────────── */
+
+/**
+ * Genuinely dark, not inverted light: surfaces step *up* in lightness as they
+ * come forward (`--bg` 0d1117 → `--surface-3` 232b36), the accent is a lighter
+ * blue because a 2f6feb button on a 161b22 card fails contrast, and every soft
+ * tone is a dark tint rather than a pastel. Every token in `:root` has a value
+ * here — a token missing from this block would silently fall back to light.
+ */
+[data-theme='dark'] {
+  --bg: #0d1117;
+  --surface: #161b22;
+  --surface-2: #1c232c;
+  --surface-3: #232b36;
+  --border: #2a313c;
+  --border-strong: #3a4350;
+  --text: #e6edf3;
+  --text-muted: #8b949e;
+  --text-inverse: #0d1117;
+
+  --accent: #4d8dff;
+  --accent-hover: #6ea1ff;
+  --accent-soft: #16233b;
+  --accent-strong: #9dc0ff;
+
+  --success: #3fb950;
+  --success-soft: #12261a;
+  --warning: #d29922;
+  --warning-soft: #2a2210;
+  --danger: #f85149;
+  --danger-soft: #2d1416;
+  --info: #58b6d6;
+
+  --overlay: rgba(0, 0, 0, 0.6);
+  /* A dark surface needs a heavier shadow to separate from a dark background. */
+  --shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-overlay: 0 8px 24px rgba(0, 0, 0, 0.6), 0 2px 6px rgba(0, 0, 0, 0.4);
+  --shadow-popover: 0 12px 32px rgba(0, 0, 0, 0.7), 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+
+/* ── 3. density ────────────────────────────────────────────────────────────── */
+
+[data-density='compact'] {
+  --row-h: 40px;
+  --control-h: 28px;
+}
+
+/* ── 4. accent variants (they override the accent family only) ─────────────── */
+
+[data-accent='teal'] {
+  --accent: #0f766e;
+  --accent-hover: #0b5c56;
+  --accent-soft: #e0f2f1;
+  --accent-strong: #0a4f49;
+}
+[data-accent='violet'] {
+  --accent: #6d28d9;
+  --accent-hover: #5b21b6;
+  --accent-soft: #f0e9fe;
+  --accent-strong: #4c1d95;
+}
+[data-accent='amber'] {
+  --accent: #b45309;
+  --accent-hover: #92400e;
+  --accent-soft: #fdf1e0;
+  --accent-strong: #7c2d12;
+}
+
+[data-theme='dark'][data-accent='teal'] {
+  --accent: #2dd4bf;
+  --accent-hover: #5eead4;
+  --accent-soft: #0d2b28;
+  --accent-strong: #99f6e4;
+}
+[data-theme='dark'][data-accent='violet'] {
+  --accent: #a78bfa;
+  --accent-hover: #c4b5fd;
+  --accent-soft: #1e1633;
+  --accent-strong: #ddd6fe;
+}
+[data-theme='dark'][data-accent='amber'] {
+  --accent: #f59e0b;
+  --accent-hover: #fbbf24;
+  --accent-soft: #2b1f0a;
+  --accent-strong: #fde68a;
+}
+
+/* ── 5. base ───────────────────────────────────────────────────────────────── */
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-ui);
+    font-size: var(--fs-body);
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* The 2px focus ring is never removed — only ever made visible on :focus-visible. */
+  :focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+    border-radius: var(--r-input);
+  }
+
+  ::selection {
+    background: var(--accent-soft);
+    color: var(--text);
+  }
+
+  /* Tabular numerals everywhere money or quantities are shown. */
+  .tnum,
+  table td.num,
+  table th.num {
+    font-variant-numeric: tabular-nums;
+    font-size: var(--fs-code);
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: var(--r-chip);
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+}
+
+@layer components {
+  /* 11px uppercase tracked label above a value — the only "section" marker a
+     screen needs. Used instead of a second heading level. */
+  .micro {
+    font-size: var(--fs-micro);
+    line-height: 1.3;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  /* A one-pixel rule that does not depend on a Tailwind border utility, for
+     dividers inside a grid where a border would change the box model. */
+  .hairline {
+    box-shadow: inset 0 -1px 0 var(--border);
+  }
+
+  /* The skip link is the first tab stop and is visible when focused. */
+  .skip-link {
+    position: fixed;
+    top: var(--sp-2);
+    left: var(--sp-2);
+    z-index: 100;
+    transform: translateY(-200%);
+    background: var(--accent);
+    color: var(--text-inverse);
+    padding: var(--sp-2) var(--sp-3);
+    border-radius: var(--r-input);
+    transition: transform var(--dur-fast) ease-out;
+  }
+  .skip-link:focus {
+    transform: translateY(0);
+  }
+
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      var(--surface-2) 0%,
+      var(--surface-3) 50%,
+      var(--surface-2) 100%
+    );
+    background-size: 200% 100%;
+    animation: nexus-shimmer 1.2s ease-in-out infinite;
+    border-radius: var(--r-input);
+  }
+
+  /**
+   * The document preview. `renderPreviewHtml` emits an A4 sheet at 210mm wide;
+   * the split view has ~360px, so the sheet is scaled down with a transform
+   * rather than reflowed — a preview that reflows is not a preview.
+   */
+  .doc-preview-scale {
+    transform: scale(var(--doc-preview-scale, 0.42));
+    transform-origin: top left;
+    width: 210mm;
+    min-height: 297mm;
+    background: #ffffff;
+    color: #14181f;
+    box-shadow: var(--shadow-raised);
+  }
+
+  @keyframes nexus-shimmer {
+    0% {
+      background-position: 200% 0;
+    }
+    100% {
+      background-position: -200% 0;
+    }
+  }
+}
+
+/* ── 6. reduced motion ─────────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur-base: 0ms;
+    --dur-slow: 0ms;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

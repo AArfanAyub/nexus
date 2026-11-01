@@ -1,0 +1,76 @@
+Copyright (c) 2026 arfanayub0. All rights reserved.
+
+NEXUS PROPRIETARY PERPETUAL LICENSE
+Version 1.0
+
+This software, including its source code, object code, database schema,
+documentation and any accompanying files (collectively, "the Software"), is
+licensed, not sold.
+
+1. GRANT OF LICENSE
+   Subject to payment of the applicable fees and to the terms of this license,
+   arfanayub0 ("the Licensor") grants the Licensee a perpetual, non-exclusive,
+   non-transferable, revocable-on-breach license to install and use the
+   Software for the internal business purposes of a single legal entity, on
+   the number of machines stated in the Licensee's activation key.
+
+2. PERPETUAL RIGHT
+   The right to use the Software does not expire. It may terminate only for
+   material breach of this license that is not cured within thirty (30) days
+   of written notice.
+
+3. RESTRICTIONS
+   The Licensee shall not:
+   (a) copy, distribute, sublicense, rent, lease or lend the Software to any
+       third party, except for backup copies kept for archival purposes;
+   (b) sell, resell, or make the Software available as a hosted or
+       service-bureau offering to third parties;
+   (c) reverse engineer, decompile, disassemble or otherwise attempt to
+       derive the source code, except to the extent such restriction is
+       prohibited by applicable law;
+   (d) remove, obscure or alter any copyright, trademark or proprietary
+       notice contained in the Software;
+   (e) circumvent, disable or tamper with the license activation mechanism.
+
+4. OWNERSHIP
+   The Software is and remains the exclusive property of the Licensor. All
+   rights not expressly granted in this license are reserved. No title to, or
+   ownership of, the Software is transferred to the Licensee.
+
+5. DATA
+   The Software stores all data locally on the Licensee's machine. The Licensor
+   has no access to that data and does not collect telemetry. The Licensee is
+   solely responsible for backup, retention and lawful processing of its data.
+
+6. NO WARRANTY
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE, ACCURACY OF ACCOUNTING OUTPUT AND
+   NON-INFRINGEMENT. THE LICENSEE IS RESPONSIBLE FOR REVIEWING ALL FINANCIAL
+   OUTPUT AND FOR ITS OWN STATUTORY RECORD-KEEPING OBLIGATIONS.
+
+7. LIMITATION OF LIABILITY
+   TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE LICENSOR SHALL NOT BE LIABLE FOR
+   ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL OR PUNITIVE DAMAGES, NOR FOR
+   ANY LOSS OF PROFITS, REVENUE, DATA OR BUSINESS INTERRUPTION, ARISING OUT OF
+   OR RELATED TO THE USE OF THE SOFTWARE. THE LICENSOR'S TOTAL AGGREGATE
+   LIABILITY SHALL NOT EXCEED THE FEES ACTUALLY PAID BY THE LICENSEE FOR THE
+   TWELVE (12) MONTHS PRECEDING THE CLAIM.
+
+8. TERMINATION
+   On termination the Licensee shall cease all use of the Software and destroy
+   all copies in its possession. Sections 3, 4, 6, 7 and 9 survive termination.
+   Termination does not entitle the Licensee to a refund, and does not grant
+   the Licensor any right to the Licensee's data.
+
+9. GOVERNING LAW
+   This license is governed by the laws of the Licensor's principal place of
+   business, without regard to conflict-of-law rules. The parties submit to the
+   exclusive jurisdiction of the courts of that place.
+
+10. ENTIRE AGREEMENT
+    This license, together with the end-user terms in EULA.md, is the entire
+    agreement between the parties concerning the Software and supersedes all
+    prior proposals and communications.
+
+For licensing enquiries: licensing@nexus.invalid

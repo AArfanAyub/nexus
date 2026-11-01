@@ -1,0 +1,46 @@
+# Copyright (c) 2026 arfanayub0. All rights reserved. Licensed under the NEXUS Proprietary Perpetual License. See LICENSE.
+
+node_modules/
+release/
+build/output/
+# NOTE: dist/ is deliberately NOT ignored. electron-builder honours .gitignore
+# when it assembles app.asar, so ignoring the build output produced an installer
+# with no application code in it (v1.0.0 packaging defect, see DECISIONS.md).
+
+# signing material — never commit the private key
+keys/
+*.pem
+
+# runtime data
+*.db
+*.db.tmp
+*.nexusbak
+logs/
+*.log
+
+# tooling
+.vite/
+.cache/
+coverage/
+.env
+.env.*
+
+# editor / os
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# packaged output — each build writes ~90 MB of exe per directory
+dist-v*/
+dist-out*/
+dist-final/
+dist-release/
+dist-icon/
+*.exe
+*.blockmap
+*.7z
+
+# scratch
+tmp/
+dist-*.log

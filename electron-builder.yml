@@ -1,0 +1,51 @@
+# Copyright (c) 2026 arfanayub0. All rights reserved. Licensed under the NEXUS Proprietary Perpetual License. See LICENSE.
+
+appId: com.arfanayub0.nexus
+productName: NEXUS
+copyright: Copyright (c) 2026 arfanayub0
+
+directories:
+  output: release
+  buildResources: build
+
+asar: true
+compression: normal
+removePackageScripts: true
+
+files:
+  - dist/main/**/*
+  - dist/renderer/**/*
+  - package.json
+  - '!**/*.map'
+  - '!**/*.ts'
+
+# R1 mitigation: sql.js resolves its wasm at runtime. In a packaged build the
+# file must exist next to the app resources, not inside node_modules.
+extraResources:
+  - from: node_modules/sql.js/dist/sql-wasm.wasm
+    to: sql-wasm.wasm
+  # The window icon in the packaged app; Windows also embeds it in the .exe.
+  - from: build/icon.png
+    to: icon.png
+
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: NEXUS
+
+portable:
+  artifactName: ${productName}-${version}-portable.${ext}
